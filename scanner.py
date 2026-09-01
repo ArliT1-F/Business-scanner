@@ -7,8 +7,15 @@ for every configured category.
 The grid is computed in *kilometres on the ground*, not in raw degrees:
 one degree of latitude and one degree of longitude cover different
 distances, so the longitude step is derived from the area's mid-latitude.
-The grid is only meant to improve discovery - Google's per-search result
-cap still applies and is respected (see places.MAX_PAGES_PER_SEARCH).
+The grid is only meant to improve discovery - Google's per-request result
+cap (20 results, no pagination for Nearby Search (New)) still applies and
+is respected (see places.MAX_RESULTS_PER_SEARCH).
+
+Two request modes:
+  * default: one API request per (cell, category) - the spec's loop;
+  * --batch-types: one API request per cell carrying ALL categories in
+    `includedTypes` (Google allows up to 50 types per request) - roughly
+    len(categories) times fewer requests.
 """
 from __future__ import annotations
 
@@ -16,7 +23,7 @@ import math
 from dataclasses import dataclass
 from typing import List, Optional
 
-from config import MAX_PAGES_PER_SEARCH, PAGE_SIZE, AppConfig
+from config import MAX_RESULTS_PER_SEARCH, MAX_TYPES_PER_REQUEST, AppConfig
 from database import Database
 from exporters import export_database
 from places import (
@@ -88,8 +95,18 @@ def build_grid_cells(
     return cells
 
 
-def count_search_jobs(cells: List[GridCell], categories: List[str]) -> int:
-    """Number of API search jobs = cells * categories (before pagination)."""
+def count_search_jobs(
+    cells: List[GridCell], categories: List[str], batch_types: bool = False
+) -> int:
+    """Number of API search jobs.
+
+    Default mode: cells * categories (one request per cell and category).
+    Batch mode:    cells (one request per cell, all categories combined).
+    """
+    if not categories:
+        return 0
+    if batch_types:
+        return len(cells)
     return len(cells) * len(categories)
 
 
@@ -108,13 +125,21 @@ def print_dry_run_report(
     print(f"Search jobs:      {total_jobs}")
     print(f"Radius per search: {config.search_radius_m}m")
     print(
-        f"Results per job:  up to {MAX_PAGES_PER_SEARCH} x {PAGE_SIZE} "
-        "(Google's documented maximum)"
+        f"Results per job:  up to {MAX_RESULTS_PER_SEARCH} "
+        "(Nearby Search (New) has a 20-result cap and no pagination)"
     )
-    print(
-        f"Estimated requests: {total_jobs} - {total_jobs * MAX_PAGES_PER_SEARCH}"
-        f" (each job may use up to {MAX_PAGES_PER_SEARCH} pages)"
-    )
+    print(f"Estimated requests: {total_jobs}")
+    if config.batch_types:
+        print(
+            f"Mode: batch - one request per cell with all {len(categories)} "
+            "categories (Google allows up to 50 types per request)."
+        )
+    else:
+        print(
+            "Mode: per-category - one request per cell and category.\n"
+            "Tip: --batch-types sends all categories in one request per "
+            f"cell, reducing the request count to {len(cells)}."
+        )
     print()
     print("No API requests will be made.")
 
@@ -124,14 +149,18 @@ def print_dry_run_report(
 # ---------------------------------------------------------------------------
 def _print_progress_head(
     cell: GridCell,
-    category: str,
-    category_no: int,
-    categories: List[str],
+    types: List[str],
+    group_no: int,
+    group_count: int,
     radius_m: int,
 ) -> None:
     """Per-job console header in the project's documented format."""
     print(f"[{cell.index}/{cell.total}] Cell {cell.index}")
-    print(f"[{category_no}/{len(categories)}] Category: {category}")
+    if len(types) == 1:
+        print(f"[{group_no}/{group_count}] Category: {types[0]}")
+    else:
+        shown = ",".join(types[:6]) + (f" ... ({len(types)} total)" if len(types) > 6 else "")
+        print(f"[{group_no}/{group_count}] Categories: {shown}")
     print("Searching:")
     print(f"    latitude: {cell.latitude:.5f}")
     print(f"    longitude: {cell.longitude:.5f}")
@@ -153,9 +182,23 @@ def run_scan(
         config.grid_size_km,
     )
     categories = config.categories
-    total_jobs = count_search_jobs(cells, categories)
+    if len(categories) > MAX_TYPES_PER_REQUEST:
+        if config.batch_types:
+            raise SystemExit(
+                f"error: --batch-types supports at most {MAX_TYPES_PER_REQUEST} "
+                f"categories per request (got {len(categories)}); remove some "
+                "categories or drop --batch-types."
+            )
+    total_jobs = count_search_jobs(cells, categories, config.batch_types)
 
-    jobs = [(cell, cat) for cell in cells for cat in categories]
+    # Each job = one API request: (cell, list of types for that request).
+    # Default: one request per (cell, category). Batch mode: one request
+    # per cell carrying every category.
+    if config.batch_types:
+        type_groups: List[List[str]] = [list(categories)]
+    else:
+        type_groups = [[cat] for cat in categories]
+    jobs = [(cell, group) for cell in cells for group in type_groups]
     if limit is not None and limit >= 0:
         jobs = jobs[:limit]
 
@@ -186,30 +229,32 @@ def run_scan(
     stop_reason: Optional[str] = None
 
     print(section(f"SCAN START - {config.city}", width=40).strip())
+    mode = "batch (all categories per cell)" if config.batch_types else "per-category"
     print(
         f"Grid: {config.grid_size_km:g} km | radius: {config.search_radius_m} m "
-        f"| jobs: {len(jobs)}"
+        f"| jobs: {len(jobs)} | mode: {mode}"
     )
     print()
 
     try:
         with Database(config.database_path) as db:
-            for cell, category in jobs:
-                category_no = categories.index(category) + 1
+            for cell, types in jobs:
+                group_no = type_groups.index(types) + 1
+                types_label = types[0] if len(types) == 1 else f"{len(types)} types"
 
                 if not quiet:
                     _print_progress_head(
-                        cell, category, category_no, categories,
+                        cell, types, group_no, len(type_groups),
                         config.search_radius_m,
                     )
 
                 try:
                     returned = new = existing = 0
-                    for raw in client.search_all_pages(
+                    for raw in client.search(
                         cell.latitude,
                         cell.longitude,
                         config.search_radius_m,
-                        category,
+                        types,
                     ):
                         record = normalize_place(raw)
                         if record is None:
@@ -257,7 +302,22 @@ def run_scan(
                 except PlacesError as exc:
                     consecutive_errors += 1
                     text = str(exc)
-                    print(f"\nERROR (cell {cell.index}, {category}): {text}")
+                    print(f"\nERROR (cell {cell.index}, {types_label}): {text}")
+                    if "INVALID_ARGUMENT" in text or "type" in text.lower():
+                        if config.batch_types:
+                            print(
+                                "Tip: batch mode sends all categories in one "
+                                "request, so a single invalid type name fails "
+                                "every job. Re-run WITHOUT --batch-types to "
+                                "isolate which category is rejected."
+                            )
+                        else:
+                            print(
+                                "Tip: check that this category is a valid "
+                                "Places API (New) feature type "
+                                "(see the Supported Types table in Google's "
+                                "docs) and remove it from --categories."
+                            )
                     # A persistent request problem (e.g. an invalid place
                     # type) would waste time on every remaining job - stop
                     # after a few identical consecutive failures.

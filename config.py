@@ -91,14 +91,15 @@ DEFAULT_REQUEST_DELAY_S = 0.5
 # Number of retries after the initial attempt for transient errors
 # (429/500/502/503/504). Backoff is 1s, 2s, 4s, ... (exponential).
 DEFAULT_MAX_RETRIES = 3
-# Results per page for Places API (New) search endpoints.
-PAGE_SIZE = 20
-# Google documents a maximum of 60 results (3 pages of 20) per search
-# request. We stop paginating at this point; we do NOT attempt to bypass it.
-MAX_PAGES_PER_SEARCH = 3
+# Nearby Search (New) returns at most this many results per request.
+# The method has NO pagination (no pageToken), so this is a hard limit
+# per search job; we respect it instead of trying to work around it.
+MAX_RESULTS_PER_SEARCH = 20
+# Maximum number of feature types accepted in one request (Google limit).
+MAX_TYPES_PER_REQUEST = 50
 # Nearby Search ranking preference. DISTANCE helps a grid scan discover
 # different businesses in overlapping cells instead of returning the same
-# "most relevant" results everywhere.
+# popular results everywhere.
 RANK_PREFERENCE = "DISTANCE"
 # HTTP timeout for a single API request, in seconds.
 REQUEST_TIMEOUT_S = 30.0
@@ -125,6 +126,11 @@ class AppConfig:
     grid_size_km: float = GRID_SIZE_KM
     search_radius_m: int = SEARCH_RADIUS_METERS
     categories: List[str] = field(default_factory=lambda: list(DEFAULT_CATEGORIES))
+    # False (default, per the project spec): one API request per
+    # (cell, category). True: ONE request per cell carrying all
+    # categories in `includedTypes` (up to Google's 50-type limit) -
+    # roughly len(categories) times fewer API requests.
+    batch_types: bool = False
     request_delay_s: float = DEFAULT_REQUEST_DELAY_S
     max_retries: int = DEFAULT_MAX_RETRIES
     rank_preference: str = RANK_PREFERENCE
