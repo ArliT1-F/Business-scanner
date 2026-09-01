@@ -1,0 +1,20 @@
+# Secrets - never commit credentials
+.env
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+# Local data and generated output (keep the folders, ignore their contents)
+data/*
+!data/.gitkeep
+output/*
+!output/.gitkeep
+# OS / editor noise
+.DS_Store
+.idea/
+.vscode/
