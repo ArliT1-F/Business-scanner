@@ -32,8 +32,9 @@ around the API's documented capabilities and limitations.
 2. For every grid cell, searches a configurable list of business
    categories (36 by default) with the Places API (New) **Nearby Search**
    endpoint, requesting only the needed fields via a field mask.
-3. Follows `nextPageToken` pagination, capped at Google's documented
-   maximum (3 pages × 20 = 60 results per search).
+3. Respects the Nearby Search (New) limits exactly: **up to 20 results per
+   request, no pagination** (the method has no pageToken) — the grid and
+   category coverage provide breadth instead.
 4. Normalizes each result (missing optional fields become safe defaults)
    and stores it in SQLite, **deduplicating by Google Place ID**
    (`place_id` is the PRIMARY KEY; same ID seen again → row updated).
@@ -54,7 +55,7 @@ Business-scanner/
 ├── config.py          # All defaults: bounds, grid, categories, delays, paths
 ├── scanner.py         # Geographic grid + scan orchestration
 ├── places.py          # Places API (New) client: field masks, retries,
-│                      #   pagination, error mapping, response normalization
+│                      #   error mapping, response normalization
 ├── database.py        # SQLite schema, upsert/dedup, stats queries
 ├── scoring.py         # Prospect scoring (all policy in one readable place)
 ├── exporters.py       # CSV export (always) + optional XLSX export
@@ -165,8 +166,10 @@ Grid cells:       96
 Categories:       36
 Search jobs:      3456
 Radius per search: 900m
-Results per job:  up to 3 x 20 (Google's documented maximum)
-Estimated requests: 3456 - 10368 (each job may use up to 3 pages)
+Results per job:  up to 20 (Nearby Search (New) has a 20-result cap and no pagination)
+Estimated requests: 3456
+Mode: per-category - one request per cell and category.
+Tip: --batch-types sends all categories in one request per cell, reducing the request count to 96.
 
 No API requests will be made.
 ```
@@ -195,11 +198,26 @@ Useful scan flags:
 ```bash
 python main.py --categories cafe,restaurant,bar,barber_shop
 python main.py --grid-km 1.0 --radius-m 1000
-python main.py --no-website-only            # final export = website-less only
+python main.py --batch-types                 # all categories in ONE request per cell (cheaper)
+python main.py --no-website-only             # final export = website-less only
 python main.py --delay 2                     # be gentler on QPS limits
 python main.py --quiet                       # less per-search output
 python main.py --db data/other.db --csv output/other.csv
 ```
+
+### Request modes (read before a full scan)
+
+Nearby Search (New) accepts **up to 50 feature types per request**, so the
+scanner can run two ways:
+
+| Mode | Flag | Requests (default config) | Discovery |
+|---|---|---|---|
+| **Per-category** (default) | — | 96 cells × 36 = **3,456** | up to 20 results *per category* per cell — the most thorough |
+| **Batch** | `--batch-types` | 96 cells × 1 = **96** | up to 20 results *total* per cell across all categories — ~36× cheaper |
+
+Pick per-category for maximum coverage; pick batch for a cheap first pass.
+Both store the same deduplicated data, so you can run batch first and
+per-category later on the categories that matter.
 
 A scan is **resumable**: re-running it only *updates* already-known Place
 IDs, it never duplicates them. If it stops early (quota, auth error,
@@ -344,9 +362,9 @@ python main.py export --no-website-only
 
 ## 13. Cost considerations
 
-* Each (cell × category) job costs **at least 1 API request**; jobs with
-  many results use up to 3 requests (pagination). The default configuration
-  is ~3,450 jobs → roughly 3,500–10,000 requests for a full scan.
+* Each job costs **exactly 1 API request** (Nearby Search (New) has no
+  pagination). Default per-category config: **~3,456 requests**; with
+  `--batch-types`: **~96 requests**.
 * Google charges Places API (New) calls by **field mask** (Essentials/Pro/
   Enterprise SKUs). This project requests a small, fixed set of fields —
   keep the field mask in `places.FIELD_MASK` small; do **not** switch it
@@ -366,9 +384,11 @@ Be precise about what this tool produces:
 * **Grid coverage** — cells tile the bounding box with ~900 m radius
   searches, so most of the city area is searched, but the bounding box
   itself is approximate; businesses outside it are not found.
-* **Google's result cap** — each search returns at most 60 results. Dense
-  areas or popular categories can contain more businesses than that;
-  ranking also influences *which* 60 you get.
+* **Google's result cap** — each request returns **at most 20 results, and
+  there is no pagination** for Nearby Search (New). Dense areas or popular
+  categories can contain many more businesses than that; ranking also
+  influences *which* 20 you get. The grid + category coverage (or a finer
+  grid / bigger radius) is how you work around this within Google's rules.
 * **Category coverage** — only businesses matching a searched feature type
   appear. The default list covers common prospecting categories; extend
   it with `--categories`.
@@ -403,7 +423,7 @@ This project respects Google's Places API terms:
 | `ERROR: Google API quota appears to have been exceeded.` | Wait for the quota window / check the project's quota in Cloud Console. Re-run — the scan resumes without duplicating data. |
 | `QPS / rate limit exceeded` | Increase the delay: `python main.py --delay 2`. |
 | 400 `INVALID_ARGUMENT` naming a category | The feature type name isn't valid for Nearby Search — check the type spelling against Google's type list and remove it from `--categories`. |
-| Very few results | Try a coarser grid (`--grid-km 2`), a bigger radius (`--radius-m 1500`), or more categories. Remember the 60-results-per-search cap. |
+| Very few results | Try a finer grid (`--grid-km 0.8`), a bigger radius (`--radius-m 1500`), or more categories. Remember the 20-results-per-request cap (no pagination). |
 | `XLSX export skipped: openpyxl is not installed` | `pip install openpyxl` (CSV is unaffected). |
 | Tests | `pytest` (run from the project root, inside the venv). |
 

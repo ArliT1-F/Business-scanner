@@ -1,5 +1,6 @@
 # Core dependencies (kept minimal on purpose).
 requests>=2.31.0
 python-dotenv>=1.0.0
+
 # Optional - only needed for XLSX export (CSV works without it):
 #   pip install openpyxl

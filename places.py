@@ -4,28 +4,42 @@ This module wraps the Nearby Search endpoint:
 
     POST https://places.googleapis.com/v1/places:searchNearby
 
+Current request schema (per Google's REST reference for places.searchNearby):
+
+    {
+      "locationRestriction": {          # required
+        "circle": {
+          "center": {"latitude": 41.32, "longitude": 19.81},
+          "radius": 900.0               # meters, (0.0, 50000.0]
+        }
+      },
+      "includedTypes": ["restaurant"],  # up to 50 types
+      "maxResultCount": 20,             # 1..20 (default 20)
+      "rankPreference": "DISTANCE"      # POPULARITY (default) or DISTANCE
+    }
+
 Design rules:
   * The API key comes from the environment (.env via python-dotenv) and is
     NEVER printed or logged.
   * Only the fields the application actually needs are requested, via an
     HTTP field mask (X-Goog-FieldMask). No wildcard '*' masks.
+  * Nearby Search (New) returns AT MOST 20 results per request and the
+    method has NO pagination (no pageToken). We respect that limit instead
+    of trying to work around it; the grid + categories provide breadth.
   * Transient errors (429/500/502/503/504) are retried with exponential
     backoff (1s, 2s, 4s, ...) up to a configurable maximum. We do not retry
     forever and we do not hammer the servers.
-  * Pagination follows Google's documented behaviour: a pageToken loop,
-    capped at the documented maximum number of results per search.
 """
 from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import requests
 
 from config import (
-    MAX_PAGES_PER_SEARCH,
-    PAGE_SIZE,
+    MAX_RESULTS_PER_SEARCH,
     RANK_PREFERENCE,
     REQUEST_TIMEOUT_S,
 )
@@ -167,61 +181,38 @@ class PlacesClient:
 
     # -- public API ---------------------------------------------------------
 
-    def search_nearby(
+    def search(
         self,
         latitude: float,
         longitude: float,
         radius_m: int,
-        included_type: str,
-        page_token: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], str]:
-        """Run one Nearby Search page.
+        included_types: List[str],
+    ) -> List[Dict[str, Any]]:
+        """Run one Nearby Search request and return its raw place objects.
 
-        Returns (places, next_page_token). next_page_token is "" when there
-        are no further pages.
+        Nearby Search (New) has no pagination: a single request returns at
+        most ``maxResultCount`` (20) places and there is no pageToken, so
+        one call here is exactly one API request.
+        ``included_types`` is capped at Google's documented 50-type limit.
         """
         payload: Dict[str, Any] = {
-            "location": {"latitude": float(latitude), "longitude": float(longitude)},
-            "radius": int(radius_m),
-            "includedTypes": [included_type],
-            "pageSize": PAGE_SIZE,
+            "locationRestriction": {
+                "circle": {
+                    "center": {
+                        "latitude": float(latitude),
+                        "longitude": float(longitude),
+                    },
+                    "radius": float(radius_m),
+                }
+            },
+            "maxResultCount": MAX_RESULTS_PER_SEARCH,
             "rankPreference": self.rank_preference,
         }
-        if page_token:
-            payload["pageToken"] = page_token
+        if included_types:
+            payload["includedTypes"] = list(included_types)[:50]
 
         data = self._post(payload)
-        places = data.get("places") or []
-        next_token = data.get("nextPageToken") or ""
-        return places, next_token
-
-    def search_all_pages(
-        self,
-        latitude: float,
-        longitude: float,
-        radius_m: int,
-        included_type: str,
-    ) -> Iterator[Dict[str, Any]]:
-        """Yield every raw place from a search, following pageTokens.
-
-        Pagination stops when Google stops offering a next page OR when the
-        documented result maximum (MAX_PAGES_PER_SEARCH pages) is reached.
-        """
-        page_token: Optional[str] = None
-        for _page in range(MAX_PAGES_PER_SEARCH):
-            places, page_token = self.search_nearby(
-                latitude, longitude, radius_m, included_type, page_token
-            )
-            yield from places
-            if not page_token or not places:
-                return
-        # Reached Google's documented cap; do not try to go beyond it.
-        log.debug(
-            "Reached documented maximum of %d pages for (%s, %s); stopping.",
-            MAX_PAGES_PER_SEARCH,
-            included_type,
-            (latitude, longitude),
-        )
+        return data.get("places") or []
 
     # -- internals ------------------------------------------------------------
 

@@ -102,6 +102,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="run at most N search jobs (useful for small test scans)",
     )
     scan.add_argument(
+        "--batch-types",
+        action="store_true",
+        default=False,
+        help="send ALL categories in ONE request per cell (Google allows "
+             "up to 50 types per request) - roughly one request per cell "
+             "instead of one per cell and category; the default mode sends "
+             "one request per cell and category",
+    )
+    scan.add_argument(
         "--no-website-only",
         action="store_true",
         default=False,
@@ -168,6 +177,8 @@ def build_config(args: argparse.Namespace) -> AppConfig:
         config.csv_path = args.csv
     if args.no_website_only:
         config.no_website_only = True
+    if args.batch_types:
+        config.batch_types = True
     try:
         config.validate()
     except ValueError as exc:

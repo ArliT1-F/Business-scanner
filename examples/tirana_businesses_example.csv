@@ -1,0 +1,7 @@
+place_id,name,address,phone,rating,review_count,website,maps_uri,latitude,longitude,primary_type,types,has_google_maps_website,prospect_score
+ChIJsample000000000000001,Kafei Panorama,"Rruga e Kavajes 45, Tirane",051 234 567,4.8,412,,https://maps.google.com/?cid=1001,41.32710,19.82150,cafe,"cafe,food,point_of_interest,establishment",false,100
+ChIJsample000000000000002,Restoranti Muzgut,"Sheshi Skanderbeg 3, Tirane",068 111 2233,4.6,187,,https://maps.google.com/?cid=1002,41.32890,19.81870,restaurant,"restaurant,food,point_of_interest,establishment",false,85
+ChIJsample000000000000003,Saloni Elegance,"Rruga Hasan Prishtina 12, Tirane",055 999 8877,4.9,95,,https://maps.google.com/?cid=1003,41.32460,19.81540,beauty_salon,"beauty_salon,health,point_of_interest,establishment",false,80
+ChIJsample000000000000005,Patiseri Miella,"Blloku, Tirane",069 777 6655,4.7,44,,https://maps.google.com/?cid=1005,41.32970,19.82010,bakery,"bakery,food,store,point_of_interest,establishment",false,70
+ChIJsample000000000000006,Superi Marketi Qendror,"Av. Zogut 101, Tirane",051 222 1100,4.1,210,https://merkti-qendror.al,https://maps.google.com/?cid=1006,41.32550,19.81400,supermarket,"supermarket,food,store,point_of_interest,establishment",true,35
+ChIJsample000000000000004,Barriera Bistro,"Rruga e Durrit 88, Tirane",052 444 3322,4.4,58,https://bistro-barriera.al,https://maps.google.com/?cid=1004,41.33010,19.82230,restaurant,"restaurant,food,point_of_interest,establishment",true,35
